@@ -46,16 +46,20 @@ const getLeadPriority = (score) => {
   return 'LOW';
 };
 
-// ✅ NEW: Enhanced Email Sending Function
+// ✅ Email Sending Function with Timeouts
 const sendEmail = async (leadData) => {
   try {
-    // Create email transporter
+    // Create email transporter with timeouts
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
       },
+      // ✅ Add connection timeouts
+      connectionTimeout: 10000, // 10 seconds
+      greetingTimeout: 10000,
+      socketTimeout: 10000,
     });
 
     // Format numbers for display
@@ -312,11 +316,18 @@ AC Energy Solutions Pvt Ltd
     return true;
   } catch (error) {
     console.error('❌ Email sending failed:', error.message);
-    
-    // Don't fail the entire request if email fails
-    // Log the error but continue
     return false;
   }
+};
+
+// ✅ Timeout wrapper for email sending
+const sendEmailWithTimeout = (leadData, timeoutMs) => {
+  return Promise.race([
+    sendEmail(leadData),
+    new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Email sending timeout')), timeoutMs)
+    )
+  ]);
 };
 
 // @desc    Create new lead
@@ -339,6 +350,7 @@ exports.createLead = async (req, res) => {
       ...leadData,
       leadScore,
       priority,
+      emailSent: false, // Initially false
     });
 
     // Save to database
@@ -346,12 +358,7 @@ exports.createLead = async (req, res) => {
 
     console.log('✅ Lead captured successfully:', leadId);
 
-    // ✅ Send email
-    const emailSent = await sendEmail(savedLead);
-    savedLead.emailSent = emailSent;
-    await savedLead.save();
-
-    // Return response
+    // ✅ IMMEDIATE RESPONSE - Don't wait for email
     res.status(201).json({
       success: true,
       message: 'Lead captured successfully',
@@ -359,9 +366,33 @@ exports.createLead = async (req, res) => {
         leadId: savedLead.leadId,
         leadScore: savedLead.leadScore,
         priority: savedLead.priority,
-        emailSent: savedLead.emailSent,
+        emailSent: false, // Will be sent asynchronously
       },
     });
+
+    // ✅ Send email AFTER response (non-blocking)
+    setImmediate(async () => {
+      try {
+        console.log('📧 Starting email send to:', savedLead.contact.email);
+        const emailSent = await sendEmailWithTimeout(savedLead, 30000); // 30 second timeout
+        
+        // Update database with email status
+        await Lead.findOneAndUpdate(
+          { leadId: savedLead.leadId },
+          { emailSent: emailSent }
+        );
+        
+        console.log('✅ Email status updated:', emailSent ? 'SUCCESS' : 'FAILED');
+      } catch (error) {
+        console.error('❌ Background email error:', error.message);
+        // Update database to show email failed
+        await Lead.findOneAndUpdate(
+          { leadId: savedLead.leadId },
+          { emailSent: false }
+        ).catch(err => console.error('Failed to update email status:', err));
+      }
+    });
+
   } catch (error) {
     console.error('❌ Error creating lead:', error);
     res.status(500).json({
