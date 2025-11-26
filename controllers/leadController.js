@@ -46,21 +46,92 @@ const getLeadPriority = (score) => {
   return 'LOW';
 };
 
-// ✅ Email Sending Function with Timeouts
+// ✅ Multiple SMTP configurations (fallback)
+const getTransporter = async () => {
+  // Try multiple configurations
+  const configs = [
+    // Config 1: Gmail with port 465 (SSL)
+    {
+      name: 'Gmail SSL (465)',
+      config: {
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS,
+        },
+        tls: {
+          rejectUnauthorized: false,
+          minVersion: 'TLSv1.2'
+        },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
+      }
+    },
+    // Config 2: Gmail with port 587 (TLS)
+    {
+      name: 'Gmail TLS (587)',
+      config: {
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false,
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS,
+        },
+        tls: {
+          rejectUnauthorized: false,
+          ciphers: 'SSLv3'
+        },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
+      }
+    },
+    // Config 3: Gmail with port 25
+    {
+      name: 'Gmail Port 25',
+      config: {
+        host: 'smtp.gmail.com',
+        port: 25,
+        secure: false,
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS,
+        },
+        tls: {
+          rejectUnauthorized: false
+        },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
+      }
+    }
+  ];
+
+  // Try each config until one works
+  for (const { name, config } of configs) {
+    try {
+      console.log(`🔍 Trying ${name}...`);
+      const transporter = nodemailer.createTransport(config);
+      await transporter.verify();
+      console.log(`✅ ${name} connection successful!`);
+      return transporter;
+    } catch (error) {
+      console.log(`❌ ${name} failed:`, error.message);
+    }
+  }
+
+  throw new Error('All SMTP configurations failed');
+};
+
+// ✅ Email sending with fallback
 const sendEmail = async (leadData) => {
   try {
-    // Create email transporter with timeouts
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-      // ✅ Add connection timeouts
-      connectionTimeout: 10000, // 10 seconds
-      greetingTimeout: 10000,
-      socketTimeout: 10000,
-    });
+    console.log('📧 Getting SMTP transporter...');
+    const transporter = await getTransporter();
 
     // Format numbers for display
     const formatCurrency = (num) => {
@@ -274,7 +345,7 @@ const sendEmail = async (leadData) => {
 </html>
     `;
 
-    // Plain text version (fallback)
+    // Plain text version
     const emailText = `
 Dear ${leadData.company.name} Team,
 
@@ -299,7 +370,7 @@ AC Energy Solutions Pvt Ltd
 
     // Email options
     const mailOptions = {
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+      from: `AC Energy Solutions <${process.env.EMAIL_USER}>`,
       to: leadData.contact.email,
       subject: `⚡ Your Potential Savings: LKR ${formatCurrency(leadData.projectedSavings.yearly)}/year - ${leadData.company.name}`,
       text: emailText,
@@ -307,20 +378,23 @@ AC Energy Solutions Pvt Ltd
     };
 
     // Send email
+    console.log('📤 Sending email...');
     const info = await transporter.sendMail(mailOptions);
     
-    console.log('📧 Email sent successfully!');
-    console.log('   To:', leadData.contact.email);
+    console.log('✅ Email sent successfully!');
     console.log('   Message ID:', info.messageId);
+    console.log('   To:', leadData.contact.email);
     
     return true;
   } catch (error) {
     console.error('❌ Email sending failed:', error.message);
+    if (error.code) console.error('   Error code:', error.code);
+    if (error.command) console.error('   Failed command:', error.command);
     return false;
   }
 };
 
-// ✅ Timeout wrapper for email sending
+// Timeout wrapper
 const sendEmailWithTimeout = (leadData, timeoutMs) => {
   return Promise.race([
     sendEmail(leadData),
@@ -350,7 +424,7 @@ exports.createLead = async (req, res) => {
       ...leadData,
       leadScore,
       priority,
-      emailSent: false, // Initially false
+      emailSent: false,
     });
 
     // Save to database
@@ -358,7 +432,7 @@ exports.createLead = async (req, res) => {
 
     console.log('✅ Lead captured successfully:', leadId);
 
-    // ✅ IMMEDIATE RESPONSE - Don't wait for email
+    // ✅ IMMEDIATE RESPONSE
     res.status(201).json({
       success: true,
       message: 'Lead captured successfully',
@@ -366,17 +440,17 @@ exports.createLead = async (req, res) => {
         leadId: savedLead.leadId,
         leadScore: savedLead.leadScore,
         priority: savedLead.priority,
-        emailSent: false, // Will be sent asynchronously
+        emailSent: false,
       },
     });
 
-    // ✅ Send email AFTER response (non-blocking)
+    // ✅ Send email AFTER response
     setImmediate(async () => {
       try {
         console.log('📧 Starting email send to:', savedLead.contact.email);
-        const emailSent = await sendEmailWithTimeout(savedLead, 30000); // 30 second timeout
+        const emailSent = await sendEmailWithTimeout(savedLead, 30000);
         
-        // Update database with email status
+        // Update database
         await Lead.findOneAndUpdate(
           { leadId: savedLead.leadId },
           { emailSent: emailSent }
@@ -385,7 +459,6 @@ exports.createLead = async (req, res) => {
         console.log('✅ Email status updated:', emailSent ? 'SUCCESS' : 'FAILED');
       } catch (error) {
         console.error('❌ Background email error:', error.message);
-        // Update database to show email failed
         await Lead.findOneAndUpdate(
           { leadId: savedLead.leadId },
           { emailSent: false }
@@ -403,9 +476,7 @@ exports.createLead = async (req, res) => {
   }
 };
 
-// @desc    Get all leads
-// @route   GET /api/leads
-// @access  Private
+// Rest of your controller functions...
 exports.getAllLeads = async (req, res) => {
   try {
     const { priority, status, page = 1, limit = 10 } = req.query;
@@ -438,9 +509,6 @@ exports.getAllLeads = async (req, res) => {
   }
 };
 
-// @desc    Get single lead
-// @route   GET /api/leads/:id
-// @access  Private
 exports.getLeadById = async (req, res) => {
   try {
     const lead = await Lead.findOne({ leadId: req.params.id });
@@ -466,9 +534,6 @@ exports.getLeadById = async (req, res) => {
   }
 };
 
-// @desc    Update lead status
-// @route   PUT /api/leads/:id
-// @access  Private
 exports.updateLead = async (req, res) => {
   try {
     const { status, notes } = req.body;
@@ -501,9 +566,6 @@ exports.updateLead = async (req, res) => {
   }
 };
 
-// @desc    Delete lead
-// @route   DELETE /api/leads/:id
-// @access  Private
 exports.deleteLead = async (req, res) => {
   try {
     const lead = await Lead.findOneAndDelete({ leadId: req.params.id });
@@ -529,9 +591,6 @@ exports.deleteLead = async (req, res) => {
   }
 };
 
-// @desc    Get lead statistics
-// @route   GET /api/leads/stats
-// @access  Private
 exports.getLeadStats = async (req, res) => {
   try {
     const totalLeads = await Lead.countDocuments();
