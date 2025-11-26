@@ -297,7 +297,7 @@ AC Energy Solutions Pvt Ltd
 
     // Send email via Resend
     console.log('📤 Sending email via Resend...');
-    const data = await resend.emails.send({
+    const { data, error } = await resend.emails.send({
       from: `AC Energy Solutions <onboarding@resend.dev>`, // Use resend.dev for testing, or your verified domain
       to: [leadData.contact.email],
       subject: `⚡ Your Potential Savings: LKR ${formatCurrency(leadData.projectedSavings.yearly)}/year - ${leadData.company.name}`,
