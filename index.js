@@ -18,7 +18,15 @@ connectDB();
 
 const app = express();
 
-app.use(cors());
+// ✅ Updated CORS for production
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:3000', 
+    'https://your-frontend-url.vercel.app' // Add this after deploying frontend
+  ],
+  credentials: true
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
