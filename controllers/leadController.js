@@ -1,5 +1,8 @@
 const Lead = require('../models/Lead');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
+
+// Initialize Resend
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Generate unique Lead ID
 const generateLeadId = () => {
@@ -46,92 +49,16 @@ const getLeadPriority = (score) => {
   return 'LOW';
 };
 
-// ✅ Multiple SMTP configurations (fallback)
-const getTransporter = async () => {
-  // Try multiple configurations
-  const configs = [
-    // Config 1: Gmail with port 465 (SSL)
-    {
-      name: 'Gmail SSL (465)',
-      config: {
-        host: 'smtp.gmail.com',
-        port: 465,
-        secure: true,
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS,
-        },
-        tls: {
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        },
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 10000,
-      }
-    },
-    // Config 2: Gmail with port 587 (TLS)
-    {
-      name: 'Gmail TLS (587)',
-      config: {
-        host: 'smtp.gmail.com',
-        port: 587,
-        secure: false,
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS,
-        },
-        tls: {
-          rejectUnauthorized: false,
-          ciphers: 'SSLv3'
-        },
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 10000,
-      }
-    },
-    // Config 3: Gmail with port 25
-    {
-      name: 'Gmail Port 25',
-      config: {
-        host: 'smtp.gmail.com',
-        port: 25,
-        secure: false,
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS,
-        },
-        tls: {
-          rejectUnauthorized: false
-        },
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 10000,
-      }
-    }
-  ];
-
-  // Try each config until one works
-  for (const { name, config } of configs) {
-    try {
-      console.log(`🔍 Trying ${name}...`);
-      const transporter = nodemailer.createTransport(config);
-      await transporter.verify();
-      console.log(`✅ ${name} connection successful!`);
-      return transporter;
-    } catch (error) {
-      console.log(`❌ ${name} failed:`, error.message);
-    }
-  }
-
-  throw new Error('All SMTP configurations failed');
-};
-
-// ✅ Email sending with fallback
+// ✅ Resend Email Function
 const sendEmail = async (leadData) => {
   try {
-    console.log('📧 Getting SMTP transporter...');
-    const transporter = await getTransporter();
+    console.log('📧 Preparing email with Resend...');
+
+    // Check if Resend is configured
+    if (!process.env.RESEND_API_KEY) {
+      console.error('❌ RESEND_API_KEY not configured');
+      return false;
+    }
 
     // Format numbers for display
     const formatCurrency = (num) => {
@@ -368,28 +295,23 @@ The Energy Solutions Team
 AC Energy Solutions Pvt Ltd
     `;
 
-    // Email options
-    const mailOptions = {
-      from: `AC Energy Solutions <${process.env.EMAIL_USER}>`,
-      to: leadData.contact.email,
+    // Send email via Resend
+    console.log('📤 Sending email via Resend...');
+    const data = await resend.emails.send({
+      from: `AC Energy Solutions <onboarding@resend.dev>`, // Use resend.dev for testing, or your verified domain
+      to: [leadData.contact.email],
       subject: `⚡ Your Potential Savings: LKR ${formatCurrency(leadData.projectedSavings.yearly)}/year - ${leadData.company.name}`,
       text: emailText,
       html: emailHTML,
-    };
+    });
 
-    // Send email
-    console.log('📤 Sending email...');
-    const info = await transporter.sendMail(mailOptions);
-    
-    console.log('✅ Email sent successfully!');
-    console.log('   Message ID:', info.messageId);
+    console.log('✅ Email sent successfully via Resend!');
+    console.log('   Email ID:', data.id);
     console.log('   To:', leadData.contact.email);
     
     return true;
   } catch (error) {
-    console.error('❌ Email sending failed:', error.message);
-    if (error.code) console.error('   Error code:', error.code);
-    if (error.command) console.error('   Failed command:', error.command);
+    console.error('❌ Resend email error:', error);
     return false;
   }
 };
@@ -476,7 +398,7 @@ exports.createLead = async (req, res) => {
   }
 };
 
-// Rest of your controller functions...
+// Rest of your controller functions (keep them as they are)
 exports.getAllLeads = async (req, res) => {
   try {
     const { priority, status, page = 1, limit = 10 } = req.query;
