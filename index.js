@@ -23,7 +23,7 @@ app.use(cors({
   origin: [
     'http://localhost:5173',
     'http://localhost:3000', 
-    'https://your-frontend-url.vercel.app' // Add this after deploying frontend
+    'https://ac-lead-magnet-production.up.railway.app' // Add this after deploying frontend
   ],
   credentials: true
 }));
