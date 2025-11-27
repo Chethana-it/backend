@@ -305,13 +305,24 @@ AC Energy Solutions Pvt Ltd
       html: emailHTML,
     });
 
-    console.log('✅ Email sent successfully via Resend!');
-    console.log('   Email ID:', data.id);
-    console.log('   To:', leadData.contact.email);
-    
-    return true;
+    // ✅ Check for error FIRST before accessing data
+    if (error) {
+      console.error('❌ Resend API error:', error.message || error);
+      return false;
+    }
+
+    // ✅ Only access data.id if data exists
+    if (data && data.id) {
+      console.log('✅ Email sent successfully via Resend!');
+      console.log('   Email ID:', data.id);
+      console.log('   To:', leadData.contact.email);
+      return true;
+    }
+
+    console.error('❌ Unexpected Resend response - no data returned');
+    return false;
   } catch (error) {
-    console.error('❌ Resend email error:', error);
+    console.error('❌ Resend email error:', error.message || error);
     return false;
   }
 };
