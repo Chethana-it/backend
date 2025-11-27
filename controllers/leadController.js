@@ -1,8 +1,4 @@
 const Lead = require('../models/Lead');
-const { Resend } = require('resend');
-
-// Initialize Resend
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Generate unique Lead ID
 const generateLeadId = () => {
@@ -49,14 +45,14 @@ const getLeadPriority = (score) => {
   return 'LOW';
 };
 
-// ✅ Resend Email Function
+// ✅ Send Email via Brevo (Sendinblue) HTTPS API - FREE 300 emails/day, sends to ANY email
 const sendEmail = async (leadData) => {
   try {
-    console.log('📧 Preparing email with Resend...');
+    console.log('📧 Preparing email with Brevo...');
 
-    // Check if Resend is configured
-    if (!process.env.RESEND_API_KEY) {
-      console.error('❌ RESEND_API_KEY not configured');
+    // Check if Brevo API key is configured
+    if (!process.env.BREVO_API_KEY) {
+      console.error('❌ BREVO_API_KEY not configured');
       return false;
     }
 
@@ -295,34 +291,56 @@ The Energy Solutions Team
 AC Energy Solutions Pvt Ltd
     `;
 
-    // Send email via Resend
-    console.log('📤 Sending email via Resend...');
-    const { data, error } = await resend.emails.send({
-      from: `AC Energy Solutions <onboarding@resend.dev>`, // Use resend.dev for testing, or your verified domain
-      to: [leadData.contact.email],
-      subject: `⚡ Your Potential Savings: LKR ${formatCurrency(leadData.projectedSavings.yearly)}/year - ${leadData.company.name}`,
-      text: emailText,
-      html: emailHTML,
+    // ✅ Send email via Brevo (Sendinblue) HTTPS API
+    console.log('📤 Sending email via Brevo API...');
+    console.log('   From:', process.env.SENDER_EMAIL);
+    console.log('   To:', leadData.contact.email);
+    
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'api-key': process.env.BREVO_API_KEY,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        sender: {
+          name: process.env.SENDER_NAME || 'AC Energy Solutions',
+          email: process.env.SENDER_EMAIL, // Your verified email in Brevo
+        },
+        to: [
+          {
+            email: leadData.contact.email,
+            name: leadData.company.name,
+          }
+        ],
+        subject: `⚡ Your Potential Savings: LKR ${formatCurrency(leadData.projectedSavings.yearly)}/year - ${leadData.company.name}`,
+        textContent: emailText,
+        htmlContent: emailHTML,
+      }),
     });
 
-    // ✅ Check for error FIRST before accessing data
-    if (error) {
-      console.error('❌ Resend API error:', error.message || error);
+    const result = await response.json();
+
+    // Check if request was successful
+    if (!response.ok) {
+      console.error('❌ Brevo API error:', result.message || JSON.stringify(result));
       return false;
     }
 
-    // ✅ Only access data.id if data exists
-    if (data && data.id) {
-      console.log('✅ Email sent successfully via Resend!');
-      console.log('   Email ID:', data.id);
+    // Check for message ID in response
+    if (result && result.messageId) {
+      console.log('✅ Email sent successfully via Brevo!');
+      console.log('   Message ID:', result.messageId);
       console.log('   To:', leadData.contact.email);
       return true;
     }
 
-    console.error('❌ Unexpected Resend response - no data returned');
-    return false;
+    console.log('✅ Email queued successfully via Brevo!');
+    return true;
+
   } catch (error) {
-    console.error('❌ Resend email error:', error.message || error);
+    console.error('❌ Email sending error:', error.message || error);
     return false;
   }
 };
@@ -377,7 +395,7 @@ exports.createLead = async (req, res) => {
       },
     });
 
-    // ✅ Send email AFTER response
+    // ✅ Send email AFTER response (non-blocking)
     setImmediate(async () => {
       try {
         console.log('📧 Starting email send to:', savedLead.contact.email);
@@ -409,7 +427,9 @@ exports.createLead = async (req, res) => {
   }
 };
 
-// Rest of your controller functions (keep them as they are)
+// @desc    Get all leads
+// @route   GET /api/leads
+// @access  Private
 exports.getAllLeads = async (req, res) => {
   try {
     const { priority, status, page = 1, limit = 10 } = req.query;
@@ -442,6 +462,9 @@ exports.getAllLeads = async (req, res) => {
   }
 };
 
+// @desc    Get single lead
+// @route   GET /api/leads/:id
+// @access  Private
 exports.getLeadById = async (req, res) => {
   try {
     const lead = await Lead.findOne({ leadId: req.params.id });
@@ -467,6 +490,9 @@ exports.getLeadById = async (req, res) => {
   }
 };
 
+// @desc    Update lead status
+// @route   PUT /api/leads/:id
+// @access  Private
 exports.updateLead = async (req, res) => {
   try {
     const { status, notes } = req.body;
@@ -499,6 +525,9 @@ exports.updateLead = async (req, res) => {
   }
 };
 
+// @desc    Delete lead
+// @route   DELETE /api/leads/:id
+// @access  Private
 exports.deleteLead = async (req, res) => {
   try {
     const lead = await Lead.findOneAndDelete({ leadId: req.params.id });
@@ -524,6 +553,9 @@ exports.deleteLead = async (req, res) => {
   }
 };
 
+// @desc    Get lead statistics
+// @route   GET /api/leads/stats
+// @access  Private
 exports.getLeadStats = async (req, res) => {
   try {
     const totalLeads = await Lead.countDocuments();
